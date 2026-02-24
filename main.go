@@ -64,8 +64,8 @@ type SessionConfig struct {
 }
 
 type SessionClaims struct {
-	Email     string    `json:"email"`
-	ExpiresAt time.Time `json:"exp"`
+	Email string `json:"email"`
+	Exp   int64  `json:"exp"`
 }
 
 var (
@@ -278,8 +278,8 @@ func setSession(w http.ResponseWriter, email string) error {
 	}
 
 	claims := SessionClaims{
-		Email:     email,
-		ExpiresAt: time.Now().Add(ttl),
+		Email: email,
+		Exp:   time.Now().Add(ttl).Unix(),
 	}
 
 	data, err := json.Marshal(claims)
@@ -287,9 +287,11 @@ func setSession(w http.ResponseWriter, email string) error {
 		return err
 	}
 
-	encoded := base64.URLEncoding.EncodeToString(data)
-	sig := sign(encoded)
-	value := encoded + "." + sig
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString(data)
+	signingInput := header + "." + payload
+	signature := sign(signingInput)
+	value := signingInput + "." + signature
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     cfg.Cookie.Name,
@@ -311,18 +313,19 @@ func getSession(r *http.Request) (*SessionClaims, error) {
 		return nil, err
 	}
 
-	parts := strings.SplitN(cookie.Value, ".", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("malformed cookie")
+	parts := strings.SplitN(cookie.Value, ".", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed JWT: expected 3 segments")
 	}
 
-	if sign(parts[0]) != parts[1] {
-		return nil, fmt.Errorf("invalid cookie signature")
+	signingInput := parts[0] + "." + parts[1]
+	if sign(signingInput) != parts[2] {
+		return nil, fmt.Errorf("invalid JWT signature")
 	}
 
-	data, err := base64.URLEncoding.DecodeString(parts[0])
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode cookie: %w", err)
+		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}
 
 	var claims SessionClaims
@@ -330,7 +333,7 @@ func getSession(r *http.Request) (*SessionClaims, error) {
 		return nil, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	if time.Now().After(claims.ExpiresAt) {
+	if time.Now().Unix() > claims.Exp {
 		return nil, fmt.Errorf("session expired")
 	}
 
@@ -341,7 +344,7 @@ func getSession(r *http.Request) (*SessionClaims, error) {
 func sign(data string) string {
 	h := hmac.New(sha256.New, []byte(cfg.Cookie.Secret))
 	h.Write([]byte(data))
-	return base64.URLEncoding.EncodeToString(h.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
 // pulls the email claim from the Google ID token
@@ -425,8 +428,8 @@ func loadConfig(path string) error {
 		cfg.Server.CallbackPath = "/oauth2/callback"
 	}
 	if cfg.Server.SignOutPath == "" {
-		log.Printf("server.signOutPath not set, defaulting to /sign_out")
-		cfg.Server.SignOutPath = "/sign_out"
+		log.Printf("server.signOutPath not set, defaulting to /signout")
+		cfg.Server.SignOutPath = "/signout"
 	}
 	if cfg.Cookie.Secret == "" {
 		// generate a random secret if not provided

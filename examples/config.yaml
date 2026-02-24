@@ -2,7 +2,7 @@ server:
   address: ":4181" # optional, default is ":4181"
   callbackPath: "/oauth2/callback" # optional, default is "/oauth2/callback"
   host: "auth.example.com"
-  signOutPath: "/sign_out" # optional, default is "/sign_out"
+  signOutPath: "/signout" # optional, default is "/signout"
   defaultRedirectURL: "https://auth.example.com/me" # optional, default is "https://<server.host>/me"
 
 google:
