@@ -1,0 +1,30 @@
+server:
+  address: ":4181" # optional, default is ":4181"
+  callbackPath: "/oauth2/callback" # optional, default is "/oauth2/callback"
+  host: "auth.example.com"
+  signOutPath: "/sign_out" # optional, default is "/sign_out"
+  defaultRedirectURL: "https://auth.example.com/me" # optional, default is "https://<server.host>/me"
+
+google:
+  clientID: "client-id.apps.googleusercontent.com"
+  clientSecret: "client-secret"
+
+cookie:
+  name: "ext-authz-session" # optional, default is "ext-authz-session"
+  domain: ".example.com"
+  secret: "openssl rand -base64 64 | tr -d '\n'" # optional, if not provided a random secret will be generated at startup (session will be lost on restart)
+  secure: true # optional, default is true
+
+session:
+  ttl: "1h" # optional, default is "1h"
+
+access:
+  "app1.example.com":
+    - xxx@gmail.com
+
+  "app2.example.com":
+    - xxx@gmail.com
+    - zzz@gmail.com
+
+  "app3.example.com":
+    - zzz@gmail.com
