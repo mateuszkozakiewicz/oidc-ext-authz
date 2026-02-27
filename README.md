@@ -74,7 +74,7 @@ spec:
 | ---------------------- | ------------------------------------------------------------------------------------ |
 | `GET /` | Forward auth endpoint |
 | `GET /oauth2/callback` | Google OAuth2 callback |
-| `GET /sign_out` | Clears session cookie and redirects to `server.defaultRedirectURL` or `?rd=` param |
+| `GET /signout` | Clears session cookie and redirects to `server.defaultRedirectURL` or `?rd=` param |
 | `GET /healthz` | Returns 200 |
 | `GET /me` | Returns authenticated user claims |
 

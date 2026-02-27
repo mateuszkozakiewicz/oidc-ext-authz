@@ -1,5 +1,6 @@
 server:
   address: ":4181" # optional, default is ":4181"
+  grpcAddress: ":4182" # optional, default is ":4182"
   callbackPath: "/oauth2/callback" # optional, default is "/oauth2/callback"
   host: "auth.example.com"
   signOutPath: "/signout" # optional, default is "/signout"
