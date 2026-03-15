@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	golang.org/x/oauth2 v0.35.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260223185530-2f722ef697dc
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260311181403-84a4fc48630c
 	google.golang.org/grpc v1.79.2
 	gopkg.in/yaml.v3 v3.0.1
 )
