@@ -1,23 +1,37 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "baseBranches": ["master", "/^v\\d+\\.\\d+\\.\\d+$/"],
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranchPatterns": [
+    "master",
+    "/^v\\d+\\.\\d+\\.\\d+$/"
+  ],
   "dockerfile": {
     "enabled": true,
-    "fileMatch": ["Dockerfile"]
+    "managerFilePatterns": [
+      "/Dockerfile/"
+    ]
   },
   "gomod": {
     "enabled": true,
-    "fileMatch": ["go.mod"]
+    "managerFilePatterns": [
+      "/go.mod/"
+    ]
   },
   "packageRules": [
     {
-      "matchManagers": ["dockerfile", "gomod"],
+      "matchManagers": [
+        "dockerfile",
+        "gomod"
+      ],
       "ignoreTests": true,
       "automerge": true
     },
     {
-      "matchFileNames": ["**/go.mod"],
+      "matchFileNames": [
+        "**/go.mod"
+      ],
       "groupName": "go.mod dependencies"
     }
   ]
