@@ -15,6 +15,10 @@
       "matchManagers": ["dockerfile", "gomod"],
       "ignoreTests": true,
       "automerge": true
+    },
+    {
+      "matchFileNames": ["**/go.mod"],
+      "groupName": "go.mod dependencies"
     }
   ]
 }
