@@ -3,6 +3,11 @@ name: Push image to GHCR
 on:
   push:
     branches: ["master", "v*.*.*"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
 
 jobs:
   build:
