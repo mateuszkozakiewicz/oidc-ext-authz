@@ -545,7 +545,7 @@ func loadConfig(path string) error {
 	if cfg.Cookie.Secret == "" {
 		// generate a random secret if not provided
 		log.Printf("cookie.secret not set, generating a random secret")
-		cfg.Cookie.Secret = base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		cfg.Cookie.Secret = base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%d", time.Now().UnixNano()))
 	}
 	if cfg.Cookie.Name == "" {
 		log.Printf("cookie.name not set, defaulting to ext-authz-session")
