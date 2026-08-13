@@ -1,8 +1,9 @@
-name: Push image to GHCR
+name: Build and release
 
 on:
   push:
-    branches: ["master", "v*.*.*"]
+    branches: ["master"]
+    tags: ["v*.*.*"]
     paths:
       - "**.go"
       - "go.mod"
@@ -14,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     strategy:
       matrix:
@@ -43,28 +44,15 @@ jobs:
         id: tags
         run: |
           BASE="ghcr.io/${{ github.repository_owner }}/oidc-ext-authz"
-          BRANCH="${{ github.ref_name }}"
-          if [[ "$BRANCH" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          REF="${{ github.ref_name }}"
+          if [[ "$REF" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
             MINOR="${BASH_REMATCH[2]}"
             PATCH="${BASH_REMATCH[3]}"
-            TAGS="${BASE}:${BRANCH}"
-            # Is there a branch v{MAJOR}.{MINOR}.X with X > PATCH?
-            NEWER_PATCH=$(git ls-remote --heads origin \
-              | grep -oP "refs/heads/v${MAJOR}\.${MINOR}\.\K[0-9]+$" \
-              | sort -n | awk -v p="$PATCH" '$1 > p' | head -1)
-            if [[ -z "$NEWER_PATCH" ]]; then
-              TAGS="${TAGS},${BASE}:v${MAJOR}.${MINOR}"
-              # Is there a branch v{MAJOR}.X.Y with X > MINOR?
-              NEWER_MINOR=$(git ls-remote --heads origin \
-                | grep -oP "refs/heads/v${MAJOR}\.\K[0-9]+(?=\.[0-9]+$)" \
-                | sort -n | awk -v m="$MINOR" '$1 > m' | head -1)
-              if [[ -z "$NEWER_MINOR" ]]; then
-                TAGS="${TAGS},${BASE}:v${MAJOR}"
-              fi
-            fi
+            echo "version=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+            TAGS="${BASE}:${MAJOR}.${MINOR}.${PATCH},${BASE}:${MAJOR}.${MINOR},${BASE}:${MAJOR},${BASE}:latest"
           else
-            TAGS="${BASE}:${BRANCH}"
+            TAGS="${BASE}:${REF}"
           fi
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
       - name: Build and push Docker image
@@ -73,3 +61,14 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/oidc-ext-authz:${{ steps.tags.outputs.version }}"
+          gh release create "${{ github.ref_name }}" \
+            "oidc-ext-authz#oidc-ext-authz-linux-amd64" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --notes "Docker image: \`${IMAGE}\`"
