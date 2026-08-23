@@ -17,11 +17,17 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - name: Check if all unreleased commits are Renovate patches
         id: check
         run: |
@@ -51,8 +57,11 @@ jobs:
           echo "next=${NEXT}" >> "$GITHUB_OUTPUT"
       - name: Create and push tag
         if: steps.check.outputs.renovate_only_commits == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.version.outputs.next }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.next }}" -m "Release ${{ steps.version.outputs.next }}"
-          git push origin "${{ steps.version.outputs.next }}"
+          git config user.name "auto-tag[bot]"
+          git config user.email "auto-tag[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
