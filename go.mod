@@ -3,7 +3,7 @@ module github.com/mateuszkozakiewicz/oidc-ext-authz
 go 1.26.5
 
 require (
-	github.com/envoyproxy/go-control-plane/envoy v1.39.0
+	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	golang.org/x/oauth2 v0.37.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
 	google.golang.org/grpc v1.84.0
