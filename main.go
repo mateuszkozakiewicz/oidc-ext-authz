@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -543,9 +544,13 @@ func loadConfig(path string) error {
 		cfg.Server.SignOutPath = "/signout"
 	}
 	if cfg.Cookie.Secret == "" {
-		// generate a random secret if not provided
+		// generate a cryptographically secure random secret if not provided
 		log.Printf("cookie.secret not set, generating a random secret")
-		cfg.Cookie.Secret = base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%d", time.Now().UnixNano()))
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return fmt.Errorf("failed to generate cookie secret: %w", err)
+		}
+		cfg.Cookie.Secret = base64.URLEncoding.EncodeToString(secret)
 	}
 	if cfg.Cookie.Name == "" {
 		log.Printf("cookie.name not set, defaulting to ext-authz-session")
