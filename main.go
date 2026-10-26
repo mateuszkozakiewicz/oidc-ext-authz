@@ -353,9 +353,18 @@ func isSafeRedirect(target string) bool {
 		return false
 	}
 
+	// browsers treat "\" as "/", so "/\evil.com" would become "//evil.com"
+	if strings.Contains(target, `\`) {
+		return false
+	}
+
 	// relative path, not a protocol-relative URL ("//evil.com")
 	if u.Scheme == "" && u.Host == "" {
 		return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//")
+	}
+
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
 	}
 
 	host := u.Hostname()

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -528,4 +530,126 @@ func TestExtractEmailMalformedToken(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestIsSafeRedirect(t *testing.T) {
+	tests := []struct {
+		target string
+		want   bool
+	}{
+		{"/", true},
+		{"/path?q=1", true},
+		{"https://example.com/", true},
+		{"https://app.example.com/path", true},
+		{"http://app.example.com/path", true},
+		{"https://a.b.example.com:8443/path", true},
+		{"//evil.com", false},
+		{"///evil.com", false},
+		{`/\evil.com`, false},
+		{`https:\\evil.com`, false},
+		{"https://evil.com", false},
+		{"https://example.com.evil.com", false},
+		{"https://evilexample.com", false},
+		{"https://app.example.com@evil.com/", false},
+		{"javascript://example.com/%0aalert(1)", false},
+		{"data:text/html,<script>alert(1)</script>", false},
+		{"ftp://app.example.com/", false},
+		{"relative/path", false},
+		{"", false},
+		{"https://app.example.com/%zz", false},
+	}
+
+	withConfig(t, testConfig(), func() {
+		for _, tt := range tests {
+			t.Run(tt.target, func(t *testing.T) {
+				if got := isSafeRedirect(tt.target); got != tt.want {
+					t.Fatalf("isSafeRedirect(%q) = %v, want %v", tt.target, got, tt.want)
+				}
+			})
+		}
+	})
+}
+
+func TestHandleSignOutRedirect(t *testing.T) {
+	tests := map[string]string{
+		"/foo":                        "/foo",
+		"https://app.example.com/bar": "https://app.example.com/bar",
+		"https://evil.com/":           "https://default.example.com/",
+		"//evil.com":                  "https://default.example.com/",
+		`/\evil.com`:                  "https://default.example.com/",
+	}
+
+	withConfig(t, testConfig(), func() {
+		for rd, want := range tests {
+			t.Run(rd, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, "/signout?rd="+url.QueryEscape(rd), nil)
+				rec := httptest.NewRecorder()
+
+				handleSignOut(rec, req)
+
+				if got := rec.Header().Get("Location"); got != want {
+					t.Fatalf("expected redirect to %s, got %s", want, got)
+				}
+			})
+		}
+	})
+}
+
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+	return path
+}
+
+const minimalConfig = `
+google:
+  clientID: id
+  clientSecret: secret
+cookie:
+  domain: .example.com
+server:
+  host: auth.example.com
+`
+
+func TestLoadConfigGeneratesRandomSecret(t *testing.T) {
+	old := cfg
+	defer func() { cfg = old }()
+
+	path := writeConfig(t, minimalConfig)
+
+	secrets := make([]string, 2)
+	for i := range secrets {
+		cfg = Config{}
+		if err := loadConfig(path); err != nil {
+			t.Fatalf("loadConfig failed: %v", err)
+		}
+		raw, err := base64.URLEncoding.DecodeString(cfg.Cookie.Secret)
+		if err != nil {
+			t.Fatalf("generated secret is not valid base64: %v", err)
+		}
+		if len(raw) != 32 {
+			t.Fatalf("expected 32-byte secret, got %d bytes", len(raw))
+		}
+		secrets[i] = cfg.Cookie.Secret
+	}
+
+	if secrets[0] == secrets[1] {
+		t.Fatalf("expected generated secrets to differ, both were %q", secrets[0])
+	}
+}
+
+func TestLoadConfigKeepsProvidedSecret(t *testing.T) {
+	old := cfg
+	defer func() { cfg = old }()
+
+	path := writeConfig(t, strings.Replace(minimalConfig, "cookie:\n", "cookie:\n  secret: my-secret\n", 1))
+	if err := loadConfig(path); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if cfg.Cookie.Secret != "my-secret" {
+		t.Fatalf("expected provided secret to be kept, got %q", cfg.Cookie.Secret)
+	}
 }
