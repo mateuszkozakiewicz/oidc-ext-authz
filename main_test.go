@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -445,4 +447,85 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	if err := loadConfig(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
 		t.Fatalf("expected error for missing config file")
 	}
+}
+
+func idTokenWith(t *testing.T, claims map[string]interface{}) *oauth2.Token {
+	t.Helper()
+	data, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("failed to marshal claims: %v", err)
+	}
+	raw := "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(data) + ".sig"
+	return (&oauth2.Token{}).WithExtra(map[string]interface{}{"id_token": raw})
+}
+
+func TestExtractEmail(t *testing.T) {
+	valid := func() map[string]interface{} {
+		return map[string]interface{}{
+			"iss":            "https://accounts.google.com",
+			"aud":            "test-client-id",
+			"email":          "alice@example.com",
+			"email_verified": true,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(c map[string]interface{})
+		wantErr bool
+	}{
+		{name: "valid", mutate: func(c map[string]interface{}) {}},
+		{name: "issuer without scheme", mutate: func(c map[string]interface{}) { c["iss"] = "accounts.google.com" }},
+		{name: "wrong issuer", mutate: func(c map[string]interface{}) { c["iss"] = "https://evil.example.com" }, wantErr: true},
+		{name: "missing issuer", mutate: func(c map[string]interface{}) { delete(c, "iss") }, wantErr: true},
+		{name: "wrong audience", mutate: func(c map[string]interface{}) { c["aud"] = "other-client-id" }, wantErr: true},
+		{name: "missing audience", mutate: func(c map[string]interface{}) { delete(c, "aud") }, wantErr: true},
+		{name: "email not verified", mutate: func(c map[string]interface{}) { c["email_verified"] = false }, wantErr: true},
+		{name: "email_verified missing", mutate: func(c map[string]interface{}) { delete(c, "email_verified") }, wantErr: true},
+		{name: "email_verified as string", mutate: func(c map[string]interface{}) { c["email_verified"] = "true" }, wantErr: true},
+		{name: "missing email", mutate: func(c map[string]interface{}) { delete(c, "email") }, wantErr: true},
+		{name: "empty email", mutate: func(c map[string]interface{}) { c["email"] = "" }, wantErr: true},
+	}
+
+	c := testConfig()
+	c.Google.ClientID = "test-client-id"
+	withConfig(t, c, func() {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				claims := valid()
+				tt.mutate(claims)
+				email, err := extractEmail(idTokenWith(t, claims))
+				if tt.wantErr {
+					if err == nil {
+						t.Fatalf("expected error, got email %q", email)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if email != "alice@example.com" {
+					t.Fatalf("expected alice@example.com, got %q", email)
+				}
+			})
+		}
+	})
+}
+
+func TestExtractEmailMalformedToken(t *testing.T) {
+	withConfig(t, testConfig(), func() {
+		tests := map[string]*oauth2.Token{
+			"no id_token":    {},
+			"two segments":   (&oauth2.Token{}).WithExtra(map[string]interface{}{"id_token": "a.b"}),
+			"invalid base64": (&oauth2.Token{}).WithExtra(map[string]interface{}{"id_token": "a.!!!.c"}),
+			"invalid json":   (&oauth2.Token{}).WithExtra(map[string]interface{}{"id_token": "a." + base64.RawURLEncoding.EncodeToString([]byte("not-json")) + ".c"}),
+		}
+		for name, tok := range tests {
+			t.Run(name, func(t *testing.T) {
+				if _, err := extractEmail(tok); err == nil {
+					t.Fatalf("expected error")
+				}
+			})
+		}
+	})
 }

@@ -459,7 +459,7 @@ func parseJWT(value string) (*SessionClaims, error) {
 	}
 
 	signingInput := parts[0] + "." + parts[1]
-	if sign(signingInput) != parts[2] {
+	if !hmac.Equal([]byte(sign(signingInput)), []byte(parts[2])) {
 		return nil, fmt.Errorf("invalid JWT signature")
 	}
 
@@ -507,6 +507,19 @@ func extractEmail(token *oauth2.Token) (string, error) {
 	var claims map[string]interface{}
 	if err := json.Unmarshal(data, &claims); err != nil {
 		return "", fmt.Errorf("failed to parse id_token claims: %w", err)
+	}
+
+	iss, _ := claims["iss"].(string)
+	if iss != "https://accounts.google.com" && iss != "accounts.google.com" {
+		return "", fmt.Errorf("unexpected id_token issuer %q", iss)
+	}
+
+	if aud, _ := claims["aud"].(string); aud != cfg.Google.ClientID {
+		return "", fmt.Errorf("id_token aud does not match client ID")
+	}
+
+	if verified, _ := claims["email_verified"].(bool); !verified {
+		return "", fmt.Errorf("id_token email is not verified")
 	}
 
 	email, ok := claims["email"].(string)
