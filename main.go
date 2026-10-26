@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -310,7 +311,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	originalURLBytes, err := base64.URLEncoding.DecodeString(state)
 	originalURL := cfg.Server.DefaultRedirectURL
-	if err == nil && len(originalURLBytes) > 0 {
+	if err == nil && len(originalURLBytes) > 0 && isSafeRedirect(string(originalURLBytes)) {
 		originalURL = string(originalURLBytes)
 	}
 
@@ -338,10 +339,28 @@ func handleSignOut(w http.ResponseWriter, r *http.Request) {
 	})
 
 	redirect := r.URL.Query().Get("rd")
-	if redirect == "" {
+	if redirect == "" || !isSafeRedirect(redirect) {
 		redirect = cfg.Server.DefaultRedirectURL
 	}
 	http.Redirect(w, r, redirect, http.StatusFound)
+}
+
+// isSafeRedirect reports whether target is a same-origin relative path or
+// matches (or is a subdomain of) cfg.Cookie.Domain, to prevent open redirects
+func isSafeRedirect(target string) bool {
+	u, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+
+	// relative path, not a protocol-relative URL ("//evil.com")
+	if u.Scheme == "" && u.Host == "" {
+		return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//")
+	}
+
+	host := u.Hostname()
+	domain := strings.TrimPrefix(cfg.Cookie.Domain, ".")
+	return host == domain || strings.HasSuffix(host, "."+domain)
 }
 
 // returns 200 OK
