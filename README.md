@@ -83,3 +83,4 @@ spec:
 | Variable      | Default               | Description                  |
 | ------------- | --------------------- | ---------------------------- |
 | `CONFIG_PATH` | `/config/config.yaml` | Path to the YAML config file |
+| `LOG_LEVEL`   | `info`                | `trace`, `debug`, `info`, `warn`, `error` |
