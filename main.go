@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	stdlog "log"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +21,8 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
@@ -91,13 +93,17 @@ type grpcAuthServer struct {
 }
 
 func main() {
+	if err := setupLogger(os.Getenv("LOG_LEVEL")); err != nil {
+		log.Fatal().Err(err).Msg("failed to set up logger")
+	}
+
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
 		configPath = "/config/config.yaml"
 	}
 
 	if err := loadConfig(configPath); err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatal().Err(err).Msg("failed to load config")
 	}
 
 	oauth2Cfg = &oauth2.Config{
@@ -123,6 +129,7 @@ func main() {
 	httpSrv := &http.Server{
 		Addr:         cfg.Server.Address,
 		Handler:      mux,
+		ErrorLog:     stdlog.New(log.Logger.With().Str("component", "http").Logger(), "", 0),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -138,35 +145,35 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", cfg.Server.GRPCAddress)
 	if err != nil {
-		log.Fatalf("failed to listen on gRPC address %s: %v", cfg.Server.GRPCAddress, err)
+		log.Fatal().Err(err).Str("address", cfg.Server.GRPCAddress).Msg("failed to listen on gRPC address")
 	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
 	go func() {
-		log.Printf("HTTP listening on %s", cfg.Server.Address)
+		log.Info().Str("address", cfg.Server.Address).Msg("HTTP listening")
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP listen error: %v", err)
+			log.Fatal().Err(err).Msg("HTTP listen error")
 		}
 	}()
 
 	go func() {
-		log.Printf("gRPC listening on %s", cfg.Server.GRPCAddress)
+		log.Info().Str("address", cfg.Server.GRPCAddress).Msg("gRPC listening")
 		if err := grpcSrv.Serve(grpcLis); err != nil {
-			log.Fatalf("gRPC serve error: %v", err)
+			log.Fatal().Err(err).Msg("gRPC serve error")
 		}
 	}()
 
 	<-stop
-	log.Println("shutting down...")
+	log.Info().Msg("shutting down")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpSrv.Shutdown(ctx)
 	grpcSrv.GracefulStop()
 
-	log.Println("shutdown complete")
+	log.Info().Msg("shutdown complete")
 }
 
 // forward auth endpoint called by reverse proxy
@@ -186,10 +193,12 @@ func handleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	originalURL := fmt.Sprintf("%s://%s%s", proto, host, uri)
 
-	log.Printf("http auth request for host=%s, uri=%s", host, uri)
+	logger := log.With().Str("transport", "http").Str("host", host).Str("uri", uri).Logger()
+	logger.Debug().Msg("auth request")
 
 	session, err := getSession(r)
 	if err != nil || session == nil {
+		logger.Info().AnErr("reason", err).Msg("auth unauthenticated, redirecting to login")
 		// no valid session — initiate Google OAuth flow
 		state := base64.URLEncoding.EncodeToString([]byte(originalURL))
 		authURL := oauth2Cfg.AuthCodeURL(state)
@@ -207,11 +216,13 @@ func handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	// check if email is allowed for this host
 	if !hasAccess(session.Email, host) {
+		logger.Warn().Str("user", session.Email).Msg("auth denied")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	// allowed — forward user info to backend via headers
+	logger.Info().Str("user", session.Email).Msg("auth allowed")
 	w.Header().Set("X-Forwarded-User", session.Email)
 	w.Header().Set("X-Auth-Request-Email", session.Email)
 	w.WriteHeader(http.StatusOK)
@@ -229,11 +240,13 @@ func (s *grpcAuthServer) Check(ctx context.Context, req *authv3.CheckRequest) (*
 		host = host[:i]
 	}
 
-	log.Printf("grpc auth request for host=%s, path=%s", host, path)
+	logger := log.With().Str("transport", "grpc").Str("host", host).Str("uri", path).Logger()
+	logger.Debug().Msg("auth request")
 
 	// parse session from cookie header
 	session, err := getSessionGRPC(headers["cookie"])
 	if err != nil || session == nil {
+		logger.Info().AnErr("reason", err).Msg("auth unauthenticated, redirecting to login")
 		// no valid session — redirect to Google OAuth
 		originalURL := fmt.Sprintf("https://%s%s", host, path)
 		state := base64.URLEncoding.EncodeToString([]byte(originalURL))
@@ -260,6 +273,7 @@ func (s *grpcAuthServer) Check(ctx context.Context, req *authv3.CheckRequest) (*
 
 	// check access for this host
 	if !hasAccess(session.Email, host) {
+		logger.Warn().Str("user", session.Email).Msg("auth denied")
 		return &authv3.CheckResponse{
 			Status: &statuspb.Status{Code: int32(codes.PermissionDenied)},
 			HttpResponse: &authv3.CheckResponse_DeniedResponse{
@@ -271,7 +285,7 @@ func (s *grpcAuthServer) Check(ctx context.Context, req *authv3.CheckRequest) (*
 	}
 
 	// allowed — pass user info upstream
-	log.Printf("grpc auth allowed for user=%s host=%s", session.Email, host)
+	logger.Info().Str("user", session.Email).Msg("auth allowed")
 	return &authv3.CheckResponse{
 		Status: &statuspb.Status{Code: int32(codes.OK)},
 		HttpResponse: &authv3.CheckResponse_OkResponse{
@@ -297,14 +311,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := oauth2Cfg.Exchange(context.Background(), code)
 	if err != nil {
-		log.Printf("token exchange failed: %v", err)
+		log.Error().Err(err).Msg("token exchange failed")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 
 	email, err := extractEmail(token)
 	if err != nil {
-		log.Printf("failed to extract email: %v", err)
+		log.Error().Err(err).Msg("failed to extract email")
 		http.Error(w, "failed to get user info", http.StatusUnauthorized)
 		return
 	}
@@ -317,12 +331,12 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// set signed session cookie
 	if err := setSession(w, email); err != nil {
-		log.Printf("failed to set session: %v", err)
+		log.Error().Err(err).Msg("failed to set session")
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("authenticated user %s, redirecting to %s", email, originalURL)
+	log.Info().Str("user", email).Str("redirect", originalURL).Msg("user authenticated")
 	http.Redirect(w, r, originalURL, http.StatusFound)
 }
 
@@ -565,28 +579,28 @@ func loadConfig(path string) error {
 
 	// set defaults
 	if cfg.Server.Address == "" {
-		log.Printf("server.address not set, defaulting to :4181")
+		log.Info().Msg("server.address not set, defaulting to :4181")
 		cfg.Server.Address = ":4181"
 	}
 	if cfg.Server.GRPCAddress == "" {
-		log.Printf("server.grpcAddress not set, defaulting to :4182")
+		log.Info().Msg("server.grpcAddress not set, defaulting to :4182")
 		cfg.Server.GRPCAddress = ":4182"
 	}
 	if cfg.Server.DefaultRedirectURL == "" {
-		log.Printf("server.defaultRedirectURL not set, defaulting to https://%s/me", cfg.Server.Host)
+		log.Info().Msgf("server.defaultRedirectURL not set, defaulting to https://%s/me", cfg.Server.Host)
 		cfg.Server.DefaultRedirectURL = fmt.Sprintf("https://%s/me", cfg.Server.Host)
 	}
 	if cfg.Server.CallbackPath == "" {
-		log.Printf("server.callbackPath not set, defaulting to /oauth2/callback")
+		log.Info().Msg("server.callbackPath not set, defaulting to /oauth2/callback")
 		cfg.Server.CallbackPath = "/oauth2/callback"
 	}
 	if cfg.Server.SignOutPath == "" {
-		log.Printf("server.signOutPath not set, defaulting to /signout")
+		log.Info().Msg("server.signOutPath not set, defaulting to /signout")
 		cfg.Server.SignOutPath = "/signout"
 	}
 	if cfg.Cookie.Secret == "" {
 		// generate a cryptographically secure random secret if not provided
-		log.Printf("cookie.secret not set, generating a random secret")
+		log.Info().Msg("cookie.secret not set, generating a random secret")
 		secret := make([]byte, 32)
 		if _, err := rand.Read(secret); err != nil {
 			return fmt.Errorf("failed to generate cookie secret: %w", err)
@@ -594,13 +608,38 @@ func loadConfig(path string) error {
 		cfg.Cookie.Secret = base64.URLEncoding.EncodeToString(secret)
 	}
 	if cfg.Cookie.Name == "" {
-		log.Printf("cookie.name not set, defaulting to ext-authz-session")
+		log.Info().Msg("cookie.name not set, defaulting to ext-authz-session")
 		cfg.Cookie.Name = "ext-authz-session"
 	}
 	if cfg.Session.TTL == "" {
-		log.Printf("session.ttl not set, defaulting to 1h")
+		log.Info().Msg("session.ttl not set, defaulting to 1h")
 		cfg.Session.TTL = "1h"
 	}
 
+	return nil
+}
+
+// configures the global zerolog JSON logger
+func setupLogger(level string) error {
+	zerolog.TimestampFieldName = "timestamp"
+	zerolog.LevelFieldName = "level"
+	zerolog.MessageFieldName = "msg"
+	zerolog.ErrorFieldName = "error"
+	zerolog.TimeFieldFormat = time.RFC3339Nano
+
+	if level == "" {
+		level = "info"
+	}
+	lvl, err := zerolog.ParseLevel(strings.ToLower(level))
+	if err != nil {
+		return fmt.Errorf("invalid LOG_LEVEL %q: %w", level, err)
+	}
+	zerolog.SetGlobalLevel(lvl)
+
+	log.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+
+	// route stdlib log (used by dependencies) through zerolog
+	stdlog.SetFlags(0)
+	stdlog.SetOutput(log.Logger)
 	return nil
 }
