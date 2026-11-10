@@ -5,8 +5,8 @@ go 1.26.5
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/rs/zerolog v1.35.1
-	golang.org/x/oauth2 v0.37.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab
+	golang.org/x/oauth2 v0.38.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261110000943-09e21b237f2c
 	google.golang.org/grpc v1.85.0
 	gopkg.in/yaml.v3 v3.0.1
 )
